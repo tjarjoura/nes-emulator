@@ -2,6 +2,7 @@ package cpu
 
 import (
 	"fmt"
+	"github.com/tjarjoura/nes-emulator/types"
 )
 
 type Cpu struct {
@@ -10,38 +11,47 @@ type Cpu struct {
 	brkFl, overflowFl, signFl    bool
 	pc, sp                       uint16
 	ram                          [2048]byte
-	prgRom                       []byte
+	cartridge, ppu, apu          types.MappedHardware
 }
 
-func (cpu *Cpu) String() string {
-	return fmt.Sprintf("%d", len(cpu.prgRom))
-}
-
-func (cpu *Cpu) LoadProgram(prgRom []byte) {
-	cpu.prgRom = make([]byte, len(prgRom))
-	copy(cpu.prgRom, prgRom)
-	cpu.pc = 0x4020
-	fmt.Printf("len(cpu.prgRom) = %d\n", len(cpu.prgRom))
+func (cpu *Cpu) LoadProgram(cartridge types.MappedHardware) {
+	cpu.cartridge = cartridge
 }
 
 func (cpu *Cpu) byteAt(address uint16) byte {
 	if address < 0x2000 {
 		return cpu.ram[address%0x800]
 	} else if address >= 0x4020 {
-		return cpu.prgRom[address-0x4020]
+		data, err := cpu.cartridge.ReadByte(address - 0x4020)
+
+		if err != nil {
+			fmt.Printf("Error reading byte at address %x: %s. Returning 0x00\n", address, err)
+			return 0x00
+		}
+
+		return data
 	} else {
-		fmt.Printf("Unmapped memory address %x. Reading 0x00", address)
+		fmt.Printf("Unmapped memory address %x. Returning 0x00\n", address)
 		return 0x00
 	}
 }
 
 func (cpu *Cpu) wordAt(address uint16) uint16 {
-	return (uint16(cpu.prgRom[address+1]) << 8) | uint16(cpu.prgRom[address])
+	dataHi := cpu.byteAt(address + 1)
+	dataLo := cpu.byteAt(address)
+
+	return uint16(dataHi)<<8 | uint16(dataLo)
 }
 
 func (cpu *Cpu) writeByte(address uint16, data uint8) error {
-	cpu.prgRom[address] = data
-	return nil
+	if address < 0x2000 {
+		cpu.ram[address%0x800] = data
+		return nil
+	} else if address >= 0x4020 {
+		return cpu.cartridge.WriteByte(address-0x4020, data)
+	} else {
+		return fmt.Errorf("Cpu.writeByte(): Unmapped memory address %x.\n", address)
+	}
 }
 
 func (cpu *Cpu) getArgument(mode addressMode) (uint16, uint16) {

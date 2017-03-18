@@ -3,16 +3,24 @@ package cartridge
 import (
 	"bytes"
 	"fmt"
+	"github.com/tjarjoura/nes-emulator/types"
 	"io"
 	"os"
 )
 
-type Cartridge struct {
-	PrgRom, chrRom []byte
+func getCartridge(mapperNumber byte, prgRom []byte, chrRom []byte) (types.MappedHardware, error) {
+	var cartridge types.MappedHardware
+
+	switch mapperNumber {
+	case 1:
+		return new(MMC1), nil
+	default:
+		return cartridge, fmt.Errorf("Unsupported mapper number: %d\n", mapperNumber)
+	}
 }
 
-func CartridgeFromFile(filename string) (Cartridge, error) {
-	var cartridge Cartridge
+func CartridgeFromFile(filename string) (types.MappedHardware, error) {
+	var cartridge types.MappedHardware
 
 	romFile, err := os.Open(filename)
 	if err != nil {
@@ -37,21 +45,17 @@ func CartridgeFromFile(filename string) (Cartridge, error) {
 	mapperHi := header[7] & 0xF0
 	fmt.Printf("Mapper number: %d\n", mapperHi|mapperLo)
 
-	if prgRomSize > 0 {
-		cartridge.PrgRom = make([]byte, prgRomSize)
-		_, err := io.ReadFull(romFile, cartridge.PrgRom)
-		if err != nil {
-			return cartridge, err
-		}
+	prgRom := make([]byte, prgRomSize)
+	_, err = io.ReadFull(romFile, prgRom)
+	if err != nil {
+		return cartridge, err
 	}
 
-	if chrRomSize > 0 {
-		cartridge.chrRom = make([]byte, chrRomSize)
-		_, err := io.ReadFull(romFile, cartridge.chrRom)
-		if err != nil {
-			return cartridge, err
-		}
+	chrRom := make([]byte, chrRomSize)
+	_, err = io.ReadFull(romFile, chrRom)
+	if err != nil {
+		return cartridge, err
 	}
 
-	return cartridge, nil
+	return getCartridge(mapperHi|mapperLo, prgRom, chrRom)
 }
