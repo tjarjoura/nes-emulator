@@ -22,12 +22,11 @@ func main() {
 		log.Fatalf("CartridgeFromFile(): %s\n", err)
 	}
 
-	fmt.Printf("len(cartridge.PrgRom) = %d\n", len(cartridge.PrgRom))
 	cpu := new(cpu.Cpu)
-	cpu.LoadProgram(cartridge.PrgRom)
+	cpu.LoadProgram(cartridge)
 	fmt.Printf("%s\n", cpu.String())
 
-	err = cpu.Run(true)
+	err = cpu.Run(false)
 	if err != nil {
 		log.Fatalf("cpu.Run(): %s\n", err)
 	}

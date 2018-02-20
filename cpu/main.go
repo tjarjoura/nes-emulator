@@ -5,33 +5,41 @@ import (
 	"github.com/tjarjoura/nes-emulator/types"
 )
 
+const CPU_RAM_SZ int = 2048
+
 type Cpu struct {
-	a, x, y, p                   byte
+	a, x, y, p, sp               byte
 	carryFl, zeroFl, interruptFl bool
 	brkFl, overflowFl, signFl    bool
-	pc, sp                       uint16
-	ram                          [2048]byte
+	decimalFl                    bool
+	pc                           uint16
+	ram                          [CPU_RAM_SZ]byte
 	cartridge, ppu, apu          types.MappedHardware
+}
+
+func (cpu *Cpu) String() string {
+	return "6502 CPU"
 }
 
 func (cpu *Cpu) LoadProgram(cartridge types.MappedHardware) {
 	cpu.cartridge = cartridge
+	cpu.pc = 0x8000
 }
 
 func (cpu *Cpu) byteAt(address uint16) byte {
 	if address < 0x2000 {
 		return cpu.ram[address%0x800]
 	} else if address >= 0x4020 {
-		data, err := cpu.cartridge.ReadByte(address - 0x4020)
+		data, err := cpu.cartridge.ReadByte(address)
 
 		if err != nil {
-			fmt.Printf("Error reading byte at address %x: %s. Returning 0x00\n", address, err)
+			fmt.Printf("Error reading byte at address 0x%x: %s. Returning 0x00\n", address, err)
 			return 0x00
 		}
 
 		return data
 	} else {
-		fmt.Printf("Unmapped memory address %x. Returning 0x00\n", address)
+		fmt.Printf("Unmapped memory address 0x%x. Returning 0x00\n", address)
 		return 0x00
 	}
 }
@@ -48,10 +56,91 @@ func (cpu *Cpu) writeByte(address uint16, data uint8) error {
 		cpu.ram[address%0x800] = data
 		return nil
 	} else if address >= 0x4020 {
-		return cpu.cartridge.WriteByte(address-0x4020, data)
+		return cpu.cartridge.WriteByte(address, data)
 	} else {
 		return fmt.Errorf("Cpu.writeByte(): Unmapped memory address %x.\n", address)
 	}
+}
+
+func (cpu *Cpu) pushByteToStack(data byte) error {
+	if cpu.sp < 1 {
+		return fmt.Errorf("Cpu.pushByteToStack(): Stack Overflow")
+	}
+
+	address := 0x100 + uint16(cpu.sp)
+	cpu.ram[address] = data
+	cpu.sp -= 1
+
+	return nil
+}
+
+func (cpu *Cpu) pullByteFromStack() (byte, error) {
+	if cpu.sp >= 0xFF {
+		return 0x00, fmt.Errorf("Cpu.pullByteFromStack(): Stack Underflow")
+	}
+
+	cpu.sp += 1
+	address := 0x100 + uint16(cpu.sp)
+	value := cpu.ram[address]
+	return value, nil
+}
+
+func (cpu *Cpu) pushWordToStack(data uint16) error {
+	if cpu.sp < 2 {
+		return fmt.Errorf("Cpu.pushWordToStack(): Stack Overflow", cpu.sp)
+	}
+
+	address := 0x100 + uint16(cpu.sp)
+	cpu.ram[address-1] = byte(data) // Little Endian Order
+	cpu.ram[address] = byte((data & 0xFF00) >> 8)
+	cpu.sp -= 2
+
+	return nil
+}
+
+func (cpu *Cpu) pullWordFromStack() (uint16, error) {
+	if cpu.sp >= 0xFE {
+		return 0x00, fmt.Errorf("Cpu.pullWordFromStack(): Stack Underflow")
+	}
+
+	cpu.sp += 2
+	address := 0x100 + uint16(cpu.sp)
+	value := (uint16(cpu.ram[address+1]) << 8) | uint16(cpu.ram[address])
+	return value, nil
+}
+
+func (cpu *Cpu) getStatusFlagsByte() byte {
+	var statusFlagsByte byte = 0x20
+
+	if cpu.carryFl {
+		statusFlagsByte |= 0x01
+	}
+	if cpu.zeroFl {
+		statusFlagsByte |= 0x02
+	}
+	if cpu.interruptFl {
+		statusFlagsByte |= 0x04
+	}
+	if cpu.decimalFl {
+		statusFlagsByte |= 0x08
+	}
+	if cpu.overflowFl {
+		statusFlagsByte |= 0x40
+	}
+	if cpu.signFl {
+		statusFlagsByte |= 0x80
+	}
+
+	return statusFlagsByte
+}
+
+func (cpu *Cpu) restoreStatusFlags(statusFlagsByte byte) {
+	cpu.carryFl = (statusFlagsByte & 0x01) > 0
+	cpu.zeroFl = (statusFlagsByte & 0x02) > 0
+	cpu.interruptFl = (statusFlagsByte & 0x04) > 0
+	cpu.decimalFl = (statusFlagsByte & 0x08) > 0
+	cpu.overflowFl = (statusFlagsByte & 0x40) > 0
+	cpu.signFl = (statusFlagsByte & 0x80) > 0
 }
 
 func (cpu *Cpu) getArgument(mode addressMode) (uint16, uint16) {
@@ -131,7 +220,7 @@ func (cpu *Cpu) Run(disassemble bool) error {
 			cpu.disassemble(instruction, incr)
 		}
 
-		err := instruction.handler(cpu, arg)
+		err := instruction.handler(cpu, arg, instruction.addressMode)
 		if err != nil {
 			return err
 		}
